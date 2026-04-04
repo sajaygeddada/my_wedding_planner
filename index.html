@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wedding Planner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="app">
+
+    <!-- SYNC STATUS BAR -->
+    <div class="sync-bar" id="syncBar">
+      <span id="syncMsg">⏳ Connecting to cloud...</span>
+    </div>
+
+    <!-- ALERT BANNER -->
+    <div class="alert-banner" id="alertBanner" style="display:none"></div>
+
+    <!-- HEADER -->
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="header-title">
+          <span class="ring-icon">◈</span>
+          <div>
+            <h1>Wedding Planner</h1>
+            <p class="header-subtitle" id="weddingDateDisplay">Set your wedding date →</p>
+          </div>
+        </div>
+        <div class="header-meta">
+          <div class="countdown" id="countdownDisplay"></div>
+          <button class="btn-ghost" id="settingsBtn">⚙ Settings</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- STATS BAR -->
+    <div class="stats-bar">
+      <div class="stat-card">
+        <span class="stat-value" id="statTasksDone">0/0</span>
+        <span class="stat-label">Tasks Done</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="statGuests">0</span>
+        <span class="stat-label">Total Guests</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="statRSVP">0</span>
+        <span class="stat-label">RSVPs Confirmed</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="statInvited">0</span>
+        <span class="stat-label">Invites Sent</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="statBudget">₹0</span>
+        <span class="stat-label">Budget Used</span>
+      </div>
+    </div>
+
+    <!-- TABS -->
+    <nav class="tab-nav">
+      <button class="tab-btn active" data-tab="dashboard">⚡ Dashboard</button>
+      <button class="tab-btn" data-tab="tasks">✓ Tasks</button>
+      <button class="tab-btn" data-tab="guests">◎ Guests</button>
+      <button class="tab-btn" data-tab="budget">₹ Budget</button>
+      <button class="tab-btn" data-tab="notes">✎ Notes</button>
+    </nav>
+
+    <!-- TAB CONTENT -->
+    <main class="tab-content">
+
+      <!-- ==================== DASHBOARD TAB ==================== -->
+      <section class="tab-panel active" id="tab-dashboard">
+        <div class="dashboard-grid">
+
+          <!-- URGENT ALERTS -->
+          <div class="dash-card dash-alerts">
+            <div class="dash-card-header">
+              <span class="dash-card-icon urgent-icon">🚨</span>
+              <h3>Urgent — Action Needed</h3>
+            </div>
+            <div id="urgentAlertsList"></div>
+          </div>
+
+          <!-- UPCOMING TASKS -->
+          <div class="dash-card">
+            <div class="dash-card-header">
+              <span class="dash-card-icon">📅</span>
+              <h3>Due Soon (next 7 days)</h3>
+            </div>
+            <div id="dueSoonList"></div>
+          </div>
+
+          <!-- RSVP PENDING -->
+          <div class="dash-card">
+            <div class="dash-card-header">
+              <span class="dash-card-icon">📨</span>
+              <h3>RSVP Pending</h3>
+            </div>
+            <div id="rsvpPendingList"></div>
+          </div>
+
+          <!-- NOT YET INVITED -->
+          <div class="dash-card">
+            <div class="dash-card-header">
+              <span class="dash-card-icon">✉</span>
+              <h3>Not Invited Yet</h3>
+            </div>
+            <div id="notInvitedList"></div>
+          </div>
+
+          <!-- BUDGET WARNING -->
+          <div class="dash-card">
+            <div class="dash-card-header">
+              <span class="dash-card-icon">💸</span>
+              <h3>Budget Status</h3>
+            </div>
+            <div id="budgetAlertPanel"></div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ==================== TASKS TAB ==================== -->
+      <section class="tab-panel active" id="tab-tasks">
+        <div class="panel-header">
+          <h2>To-Do List</h2>
+          <div class="filter-row">
+            <select id="taskFilterCat" class="filter-select">
+              <option value="">All Categories</option>
+              <option value="Venue">Venue</option>
+              <option value="Catering">Catering</option>
+              <option value="Attire">Attire</option>
+              <option value="Photography">Photography</option>
+              <option value="Decor">Decor</option>
+              <option value="Music">Music</option>
+              <option value="Invitations">Invitations</option>
+              <option value="Legal">Legal</option>
+              <option value="Other">Other</option>
+            </select>
+            <select id="taskFilterStatus" class="filter-select">
+              <option value="">All Status</option>
+              <option value="pending">Pending</option>
+              <option value="done">Completed</option>
+            </select>
+            <button class="btn-primary" id="openAddTask">+ Add Task</button>
+          </div>
+        </div>
+
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill" id="taskProgressBar" style="width:0%"></div>
+        </div>
+        <p class="progress-label" id="taskProgressLabel">0 of 0 tasks completed</p>
+
+        <div class="task-list" id="taskList"></div>
+      </section>
+
+      <!-- ==================== GUESTS TAB ==================== -->
+      <section class="tab-panel" id="tab-guests">
+        <div class="panel-header">
+          <h2>Guest List</h2>
+          <div class="filter-row">
+            <input type="text" id="guestSearch" placeholder="Search guests..." class="search-input" />
+            <select id="guestFilterSection" class="filter-select">
+              <option value="">All</option>
+              <option value="family">Family</option>
+              <option value="friends">Friends</option>
+            </select>
+            <select id="guestFilterRsvp" class="filter-select">
+              <option value="">All RSVP</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="declined">Declined</option>
+              <option value="pending">Pending</option>
+            </select>
+            <button class="btn-primary" id="openAddGuest">+ Add Guest</button>
+          </div>
+        </div>
+
+        <div class="guest-sections">
+          <div class="guest-section">
+            <div class="section-header family-header">
+              <span class="section-icon">🏠</span>
+              <h3>Family</h3>
+              <span class="guest-count" id="familyCount">0</span>
+            </div>
+            <div class="guest-table-wrap">
+              <table class="guest-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Phone</th>
+                    <th>Side</th>
+                    <th>Invited</th>
+                    <th>RSVP</th>
+                    <th>+1</th>
+                    <th>Notes</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="familyTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="guest-section">
+            <div class="section-header friends-header">
+              <span class="section-icon">✦</span>
+              <h3>Friends</h3>
+              <span class="guest-count" id="friendsCount">0</span>
+            </div>
+            <div class="guest-table-wrap">
+              <table class="guest-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Phone</th>
+                    <th>Side</th>
+                    <th>Invited</th>
+                    <th>RSVP</th>
+                    <th>+1</th>
+                    <th>Notes</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="friendsTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== BUDGET TAB ==================== -->
+      <section class="tab-panel" id="tab-budget">
+        <div class="panel-header">
+          <h2>Budget Tracker</h2>
+          <button class="btn-primary" id="openAddExpense">+ Add Expense</button>
+        </div>
+
+        <div class="budget-overview">
+          <div class="budget-total-card">
+            <label>Total Budget</label>
+            <div class="budget-input-row">
+              <span class="currency">₹</span>
+              <input type="number" id="totalBudgetInput" placeholder="0" class="budget-big-input" />
+            </div>
+          </div>
+          <div class="budget-stats">
+            <div class="bstat">
+              <span class="bstat-val" id="budgetSpent">₹0</span>
+              <span class="bstat-lbl">Spent</span>
+            </div>
+            <div class="bstat">
+              <span class="bstat-val" id="budgetRemaining">₹0</span>
+              <span class="bstat-lbl">Remaining</span>
+            </div>
+            <div class="bstat">
+              <span class="bstat-val" id="budgetPercent">0%</span>
+              <span class="bstat-lbl">Used</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="budget-bar-wrap">
+          <div class="budget-bar-fill" id="budgetBarFill" style="width:0%"></div>
+        </div>
+
+        <div class="expense-list" id="expenseList"></div>
+      </section>
+
+      <!-- ==================== NOTES TAB ==================== -->
+      <section class="tab-panel" id="tab-notes">
+        <div class="panel-header">
+          <h2>Notes & Ideas</h2>
+          <button class="btn-primary" id="openAddNote">+ Add Note</button>
+        </div>
+        <div class="notes-grid" id="notesGrid"></div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ==================== MODALS ==================== -->
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal">
+      <div class="modal-header"><h3>Wedding Details</h3><button class="modal-close" data-modal="settingsModal">✕</button></div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Bride's Name</label>
+          <input type="text" id="settingBride" placeholder="e.g. Amrusha" />
+        </div>
+        <div class="form-group">
+          <label>Groom's Name</label>
+          <input type="text" id="settingGroom" placeholder="e.g. Sajay" />
+        </div>
+        <div class="form-group">
+          <label>Wedding Date</label>
+          <input type="date" id="settingDate" />
+        </div>
+        <div class="form-group">
+          <label>Venue</label>
+          <input type="text" id="settingVenue" placeholder="e.g. Macherla, Andhra Pradesh" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" data-modal="settingsModal">Cancel</button>
+        <button class="btn-primary" id="saveSettings">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Task Modal -->
+  <div class="modal-overlay" id="addTaskModal">
+    <div class="modal">
+      <div class="modal-header"><h3 id="taskModalTitle">Add Task</h3><button class="modal-close" data-modal="addTaskModal">✕</button></div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Task Name *</label>
+          <input type="text" id="taskName" placeholder="e.g. Book the photographer" />
+        </div>
+        <div class="form-group">
+          <label>Category</label>
+          <select id="taskCategory">
+            <option value="Venue">Venue</option>
+            <option value="Catering">Catering</option>
+            <option value="Attire">Attire</option>
+            <option value="Photography">Photography</option>
+            <option value="Decor">Decor</option>
+            <option value="Music">Music</option>
+            <option value="Invitations">Invitations</option>
+            <option value="Legal">Legal</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Priority</label>
+          <select id="taskPriority">
+            <option value="high">🔴 High</option>
+            <option value="medium" selected>🟡 Medium</option>
+            <option value="low">🟢 Low</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Due Date</label>
+          <input type="date" id="taskDueDate" />
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea id="taskNotes" rows="3" placeholder="Any additional notes..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" data-modal="addTaskModal">Cancel</button>
+        <button class="btn-primary" id="saveTask">Save Task</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Guest Modal -->
+  <div class="modal-overlay" id="addGuestModal">
+    <div class="modal">
+      <div class="modal-header"><h3 id="guestModalTitle">Add Guest</h3><button class="modal-close" data-modal="addGuestModal">✕</button></div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Name *</label>
+            <input type="text" id="guestName" placeholder="Full name" />
+          </div>
+          <div class="form-group">
+            <label>Section</label>
+            <select id="guestSection">
+              <option value="family">Family</option>
+              <option value="friends">Friends</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Phone</label>
+            <input type="tel" id="guestPhone" placeholder="+91 ..." />
+          </div>
+          <div class="form-group">
+            <label>Side</label>
+            <select id="guestSide">
+              <option value="bride">Bride's Side</option>
+              <option value="groom">Groom's Side</option>
+              <option value="mutual">Mutual</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Invited?</label>
+            <select id="guestInvited">
+              <option value="no">Not Yet</option>
+              <option value="yes">Yes ✓</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>RSVP Status</label>
+            <select id="guestRsvp">
+              <option value="pending">Pending</option>
+              <option value="confirmed">Confirmed ✓</option>
+              <option value="declined">Declined ✗</option>
+              <option value="maybe">Maybe</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>+1 / Extra Guests</label>
+            <input type="number" id="guestPlus" value="0" min="0" max="10" />
+          </div>
+          <div class="form-group">
+            <label>Notes</label>
+            <input type="text" id="guestNote" placeholder="e.g. Vegetarian" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" data-modal="addGuestModal">Cancel</button>
+        <button class="btn-primary" id="saveGuest">Save Guest</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Expense Modal -->
+  <div class="modal-overlay" id="addExpenseModal">
+    <div class="modal">
+      <div class="modal-header"><h3 id="expenseModalTitle">Add Expense</h3><button class="modal-close" data-modal="addExpenseModal">✕</button></div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Description *</label>
+          <input type="text" id="expenseName" placeholder="e.g. Catering advance" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Amount (₹) *</label>
+            <input type="number" id="expenseAmount" placeholder="0" min="0" />
+          </div>
+          <div class="form-group">
+            <label>Category</label>
+            <select id="expenseCategory">
+              <option value="Venue">Venue</option>
+              <option value="Catering">Catering</option>
+              <option value="Attire">Attire</option>
+              <option value="Photography">Photography</option>
+              <option value="Decor">Decor</option>
+              <option value="Music">Music</option>
+              <option value="Invitations">Invitations</option>
+              <option value="Jewelry">Jewelry</option>
+              <option value="Transport">Transport</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Status</label>
+            <select id="expenseStatus">
+              <option value="paid">Paid</option>
+              <option value="pending">Pending / Advance</option>
+              <option value="due">Due</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Date</label>
+            <input type="date" id="expenseDate" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" data-modal="addExpenseModal">Cancel</button>
+        <button class="btn-primary" id="saveExpense">Save Expense</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Note Modal -->
+  <div class="modal-overlay" id="addNoteModal">
+    <div class="modal">
+      <div class="modal-header"><h3>Add Note</h3><button class="modal-close" data-modal="addNoteModal">✕</button></div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Title *</label>
+          <input type="text" id="noteTitle" placeholder="e.g. Song wishlist" />
+        </div>
+        <div class="form-group">
+          <label>Content</label>
+          <textarea id="noteContent" rows="6" placeholder="Write your thoughts, ideas, contacts..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Color</label>
+          <div class="color-picker" id="noteColorPicker">
+            <span class="color-dot selected" data-color="cream" style="background:#fdf6ec;"></span>
+            <span class="color-dot" data-color="rose" style="background:#fdedf2;"></span>
+            <span class="color-dot" data-color="sage" style="background:#edf7f0;"></span>
+            <span class="color-dot" data-color="sky" style="background:#edf4fd;"></span>
+            <span class="color-dot" data-color="lavender" style="background:#f2eeff;"></span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" data-modal="addNoteModal">Cancel</button>
+        <button class="btn-primary" id="saveNote">Save Note</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

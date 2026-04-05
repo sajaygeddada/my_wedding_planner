@@ -12,11 +12,6 @@
 <body>
   <div class="app">
 
-    <!-- SYNC STATUS BAR -->
-    <div class="sync-bar" id="syncBar">
-      <span id="syncMsg">⏳ Connecting to cloud...</span>
-    </div>
-
     <!-- ALERT BANNER -->
     <div class="alert-banner" id="alertBanner" style="display:none"></div>
 
@@ -24,7 +19,10 @@
     <header class="app-header">
       <div class="header-inner">
         <div class="header-title">
-          <span class="ring-icon">◈</span>
+          <div class="ring-icon-wrap" id="ringIconWrap" title="Connecting...">
+            <span class="ring-icon">◈</span>
+            <span class="sync-dot" id="syncDot"></span>
+          </div>
           <div>
             <h1>Wedding Planner</h1>
             <p class="header-subtitle" id="weddingDateDisplay">Set your wedding date →</p>
@@ -46,6 +44,7 @@
       <div class="stat-card">
         <span class="stat-value" id="statGuests">0</span>
         <span class="stat-label">Total Guests</span>
+        <span class="stat-sublabel" id="statGuestsSub"></span>
       </div>
       <div class="stat-card">
         <span class="stat-value" id="statRSVP">0</span>
@@ -165,72 +164,36 @@
           <h2>Guest List</h2>
           <div class="filter-row">
             <input type="text" id="guestSearch" placeholder="Search guests..." class="search-input" />
-            <select id="guestFilterSection" class="filter-select">
-              <option value="">All</option>
-              <option value="family">Family</option>
-              <option value="friends">Friends</option>
-            </select>
-            <select id="guestFilterRsvp" class="filter-select">
-              <option value="">All RSVP</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="declined">Declined</option>
-              <option value="pending">Pending</option>
-            </select>
             <button class="btn-primary" id="openAddGuest">+ Add Guest</button>
           </div>
         </div>
 
-        <div class="guest-sections">
-          <div class="guest-section">
-            <div class="section-header family-header">
-              <span class="section-icon">🏠</span>
-              <h3>Family</h3>
-              <span class="guest-count" id="familyCount">0</span>
-            </div>
-            <div class="guest-table-wrap">
-              <table class="guest-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Phone</th>
-                    <th>Side</th>
-                    <th>Invited</th>
-                    <th>RSVP</th>
-                    <th>+1</th>
-                    <th>Notes</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody id="familyTableBody"></tbody>
-              </table>
-            </div>
+        <!-- GROUP + RSVP FILTER BAR -->
+        <div class="guest-filter-bar">
+          <div class="group-chips" id="groupChips">
+            <button class="group-chip active" data-group="">All Guests</button>
+            <span class="chip-divider">Family</span>
+            <button class="group-chip" data-group="family|bride">🏠 Bride's</button>
+            <button class="group-chip" data-group="family|groom">🏠 Groom's</button>
+            <button class="group-chip" data-group="family|mutual">🏠 Mutual</button>
+            <button class="group-chip" data-group="family|">🏠 All Family</button>
+            <span class="chip-divider">Friends</span>
+            <button class="group-chip" data-group="friends|bride">✦ Bride's</button>
+            <button class="group-chip" data-group="friends|groom">✦ Groom's</button>
+            <button class="group-chip" data-group="friends|mutual">✦ Mutual</button>
+            <button class="group-chip" data-group="friends|">✦ All Friends</button>
           </div>
-
-          <div class="guest-section">
-            <div class="section-header friends-header">
-              <span class="section-icon">✦</span>
-              <h3>Friends</h3>
-              <span class="guest-count" id="friendsCount">0</span>
-            </div>
-            <div class="guest-table-wrap">
-              <table class="guest-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Phone</th>
-                    <th>Side</th>
-                    <th>Invited</th>
-                    <th>RSVP</th>
-                    <th>+1</th>
-                    <th>Notes</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody id="friendsTableBody"></tbody>
-              </table>
-            </div>
+          <div class="rsvp-chips" id="rsvpChips">
+            <button class="rsvp-chip active" data-rsvp="">All RSVP</button>
+            <button class="rsvp-chip rsvp-chip-confirmed" data-rsvp="confirmed">✓ Confirmed</button>
+            <button class="rsvp-chip rsvp-chip-pending" data-rsvp="pending">⏳ Pending</button>
+            <button class="rsvp-chip rsvp-chip-maybe" data-rsvp="maybe">? Maybe</button>
+            <button class="rsvp-chip rsvp-chip-declined" data-rsvp="declined">✗ Declined</button>
           </div>
         </div>
+
+        <!-- DYNAMIC SECTIONS RENDERED BY JS -->
+        <div class="guest-sections" id="guestSectionsContainer"></div>
       </section>
 
       <!-- ==================== BUDGET TAB ==================== -->

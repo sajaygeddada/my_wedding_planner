@@ -6,8 +6,8 @@
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
 // 🔧 REPLACE THESE TWO VALUES with your own from supabase.com → Project Settings → API
-const SUPABASE_URL = 'https://bbnkcngltcypamdqzcyq.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJibmtjbmdsdGN5cGFtZHF6Y3lxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMjEyMjQsImV4cCI6MjA5MDg5NzIyNH0.oJepIft4tYrZCdr00Sp4B_YVgr_T9cWuvmfajaCNn4s';
+const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -23,12 +23,12 @@ const state = {
 
 let selectedNoteColor = 'cream';
 
-// ─── SYNC BAR ─────────────────────────────────────────────────────────────────
-function setSyncStatus(status, msg) {
-  const bar = document.getElementById('syncBar');
-  const msgEl = document.getElementById('syncMsg');
-  bar.className = 'sync-bar ' + status;
-  msgEl.textContent = msg;
+// ─── SYNC INDICATOR (ring icon glow) ─────────────────────────────────────────
+function setSyncStatus(status, tooltip) {
+  const wrap = document.getElementById('ringIconWrap');
+  if (!wrap) return;
+  wrap.className = 'ring-icon-wrap ' + status;
+  wrap.title = tooltip;
 }
 
 // ─── LOAD ALL DATA ────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ function loadFromLocalStorage() {
     } else {
       setSyncStatus('warning', '⚠ Not connected to cloud. Set Supabase keys in app.js to enable sync.');
     }
-  } catch (e) { }
+  } catch (e) {}
   renderAll();
 }
 
@@ -114,7 +114,7 @@ function clearForm(...ids) {
 
 function escHtml(str) {
   if (!str) return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ─── RENDER ALL ───────────────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ document.getElementById('saveSettings').addEventListener('click', async () => {
     venue: document.getElementById('settingVenue').value.trim(),
   };
   Object.assign(state.settings, updated);
-  try { await db.from('settings').upsert({ id: 1, ...state.settings }); } catch (e) { }
+  try { await db.from('settings').upsert({ id: 1, ...state.settings }); } catch (e) {}
   saveLocal();
   renderHeader();
   renderDashboard();
@@ -194,7 +194,18 @@ document.getElementById('saveSettings').addEventListener('click', async () => {
 function renderStats() {
   const done = state.tasks.filter(t => t.done).length;
   document.getElementById('statTasksDone').textContent = `${done}/${state.tasks.length}`;
-  document.getElementById('statGuests').textContent = state.guests.length;
+
+  const headCount = state.guests.length;
+  const plusCount = state.guests.reduce((s, g) => s + (parseInt(g.plus) || 0), 0);
+  const totalWithPlus = headCount + plusCount;
+  document.getElementById('statGuests').textContent = totalWithPlus;
+  const sub = document.getElementById('statGuestsSub');
+  if (plusCount > 0) {
+    sub.textContent = `${headCount} people + ${plusCount} +1s`;
+  } else {
+    sub.textContent = '';
+  }
+
   document.getElementById('statRSVP').textContent = state.guests.filter(g => g.rsvp === 'confirmed').length;
   document.getElementById('statInvited').textContent = state.guests.filter(g => g.invited === 'yes').length;
   const spent = state.expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
@@ -232,7 +243,7 @@ function renderUrgentAlerts() {
         <div class="dash-item-meta">
           ${t.urgentType === 'overdue' ? `⚠ Overdue since ${formatDate(t.due_date)} · ` : ''}
           🔴 High Priority · ${t.category}
-          ${t.notes ? ` · ${escHtml(t.notes).slice(0, 50)}` : ''}
+          ${t.notes ? ` · ${escHtml(t.notes).slice(0,50)}` : ''}
         </div>
       </div>
       <button class="btn-primary" style="font-size:12px;padding:5px 12px;white-space:nowrap" onclick="quickDoneTask('${t.id}')">Mark Done</button>
@@ -340,7 +351,7 @@ function renderTopAlertBanner() {
 async function quickDoneTask(id) {
   const task = state.tasks.find(t => t.id === id);
   if (task) task.done = true;
-  try { await db.from('tasks').update({ done: true }).eq('id', id); } catch (e) { }
+  try { await db.from('tasks').update({ done: true }).eq('id', id); } catch (e) {}
   saveLocal();
   renderAll();
 }
@@ -397,7 +408,7 @@ async function toggleTask(id) {
   const task = state.tasks.find(t => t.id === id);
   if (!task) return;
   task.done = !task.done;
-  try { await db.from('tasks').update({ done: task.done }).eq('id', id); } catch (e) { }
+  try { await db.from('tasks').update({ done: task.done }).eq('id', id); } catch (e) {}
   saveLocal();
   renderTasks();
   renderDashboard();
@@ -406,7 +417,7 @@ async function toggleTask(id) {
 
 async function deleteTask(id) {
   if (!confirm('Delete this task?')) return;
-  try { await db.from('tasks').delete().eq('id', id); } catch (e) { }
+  try { await db.from('tasks').delete().eq('id', id); } catch (e) {}
   state.tasks = state.tasks.filter(t => t.id !== id);
   saveLocal();
   renderTasks();
@@ -472,48 +483,127 @@ document.getElementById('taskFilterCat').addEventListener('change', renderTasks)
 document.getElementById('taskFilterStatus').addEventListener('change', renderTasks);
 
 // ─── GUESTS ───────────────────────────────────────────────────────────────────
+
+// Active filter state
+let activeGroup = '';   // '' | 'family|bride' | 'friends|groom' | etc.
+let activeRsvp  = '';   // '' | 'confirmed' | 'pending' | 'maybe' | 'declined'
+
+// Group chip config — defines how to slice the guest list
+const GROUP_CONFIGS = [
+  { key: '',              label: 'All Guests',       icon: '◈', colorKey: 'all',            match: () => true },
+  { key: 'family|bride',  label: "Family — Bride's", icon: '🏠', colorKey: 'family-bride',  match: g => g.section === 'family'  && g.side === 'bride'  },
+  { key: 'family|groom',  label: "Family — Groom's", icon: '🏠', colorKey: 'family-groom',  match: g => g.section === 'family'  && g.side === 'groom'  },
+  { key: 'family|mutual', label: 'Family — Mutual',  icon: '🏠', colorKey: 'family-mutual', match: g => g.section === 'family'  && g.side === 'mutual' },
+  { key: 'family|',       label: 'All Family',       icon: '🏠', colorKey: 'family',        match: g => g.section === 'family'  },
+  { key: 'friends|bride', label: "Friends — Bride's",icon: '✦', colorKey: 'friends-bride',  match: g => g.section === 'friends' && g.side === 'bride'  },
+  { key: 'friends|groom', label: "Friends — Groom's",icon: '✦', colorKey: 'friends-groom',  match: g => g.section === 'friends' && g.side === 'groom'  },
+  { key: 'friends|mutual',label: 'Friends — Mutual', icon: '✦', colorKey: 'friends-mutual', match: g => g.section === 'friends' && g.side === 'mutual' },
+  { key: 'friends|',      label: 'All Friends',      icon: '✦', colorKey: 'friends',        match: g => g.section === 'friends' },
+];
+
+// When viewing "All Guests", split into these sub-sections automatically
+const AUTO_SECTIONS = [
+  { key: 'family-bride',   label: "Family — Bride's Side", icon: '🏠', match: g => g.section === 'family'  && g.side === 'bride'  },
+  { key: 'family-groom',   label: "Family — Groom's Side", icon: '🏠', match: g => g.section === 'family'  && g.side === 'groom'  },
+  { key: 'family-mutual',  label: 'Family — Mutual',       icon: '🏠', match: g => g.section === 'family'  && g.side === 'mutual' },
+  { key: 'friends-bride',  label: "Friends — Bride's Side",icon: '✦', match: g => g.section === 'friends' && g.side === 'bride'  },
+  { key: 'friends-groom',  label: "Friends — Groom's Side",icon: '✦', match: g => g.section === 'friends' && g.side === 'groom'  },
+  { key: 'friends-mutual', label: 'Friends — Mutual',      icon: '✦', match: g => g.section === 'friends' && g.side === 'mutual' },
+];
+
 function renderGuests() {
   const search = document.getElementById('guestSearch').value.toLowerCase();
-  const sectionFilter = document.getElementById('guestFilterSection').value;
-  const rsvpFilter = document.getElementById('guestFilterRsvp').value;
-  let guests = [...state.guests];
-  if (search) guests = guests.filter(g => g.name.toLowerCase().includes(search) || (g.phone || '').includes(search));
-  if (sectionFilter) guests = guests.filter(g => g.section === sectionFilter);
-  if (rsvpFilter) guests = guests.filter(g => g.rsvp === rsvpFilter);
 
-  const family = guests.filter(g => g.section === 'family');
-  const friends = guests.filter(g => g.section === 'friends');
-  document.getElementById('familyCount').textContent = family.length;
-  document.getElementById('friendsCount').textContent = friends.length;
-  renderGuestTable('familyTableBody', family);
-  renderGuestTable('friendsTableBody', friends);
+  // Apply search + rsvp filter first
+  let filtered = state.guests.filter(g => {
+    const matchSearch = !search || g.name.toLowerCase().includes(search) || (g.phone || '').includes(search);
+    const matchRsvp   = !activeRsvp || g.rsvp === activeRsvp;
+    return matchSearch && matchRsvp;
+  });
+
+  // Apply group filter
+  const groupCfg = GROUP_CONFIGS.find(c => c.key === activeGroup) || GROUP_CONFIGS[0];
+  filtered = filtered.filter(groupCfg.match);
+
+  const container = document.getElementById('guestSectionsContainer');
+
+  if (!filtered.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">◎</div><p>No guests match this filter</p></div>`;
+    renderStats();
+    return;
+  }
+
+  // Decide how to section the results
+  let sections;
+  if (activeGroup === '') {
+    // Auto multi-section view
+    sections = AUTO_SECTIONS
+      .map(s => ({ ...s, guests: filtered.filter(s.match) }))
+      .filter(s => s.guests.length > 0);
+  } else {
+    // Single group — one section
+    sections = [{ key: groupCfg.colorKey, label: groupCfg.label, icon: groupCfg.icon, guests: filtered }];
+  }
+
+  container.innerHTML = sections.map(sec => {
+    const plus = sec.guests.reduce((sum, g) => sum + (parseInt(g.plus) || 0), 0);
+    const countLabel = plus > 0 ? `${sec.guests.length} <span class="guest-count-sub">+${plus} guests</span>` : `${sec.guests.length}`;
+    return `
+    <div class="guest-section">
+      <div class="section-header section-header-${sec.key}">
+        <span class="section-icon">${sec.icon}</span>
+        <h3>${sec.label}</h3>
+        <span class="guest-count">${sec.guests.length}</span>
+        ${plus > 0 ? `<span style="font-size:11.5px;color:var(--text-muted)">+${plus} guests</span>` : ''}
+      </div>
+      <div class="guest-table-wrap">
+        <table class="guest-table">
+          <thead><tr>
+            <th>Name</th><th>Phone</th><th>Invited</th><th>RSVP</th><th>+1</th><th>Notes</th><th></th>
+          </tr></thead>
+          <tbody>
+            ${sec.guests.map(g => `
+            <tr>
+              <td><strong>${escHtml(g.name)}</strong></td>
+              <td>${escHtml(g.phone || '—')}</td>
+              <td class="${g.invited === 'yes' ? 'invited-yes' : 'invited-no'}">${g.invited === 'yes' ? '✓ Yes' : 'No'}</td>
+              <td><span class="rsvp-badge rsvp-${g.rsvp}">${rsvpLabel(g.rsvp)}</span></td>
+              <td>${g.plus > 0 ? '<strong>+' + g.plus + '</strong>' : '—'}</td>
+              <td style="color:var(--text-muted);font-size:12.5px">${escHtml(g.note || '')}</td>
+              <td style="white-space:nowrap">
+                <button class="btn-icon" onclick="editGuest('${g.id}')">✎</button>
+                <button class="btn-icon" onclick="deleteGuest('${g.id}')">✕</button>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+
   renderStats();
 }
 
-function renderGuestTable(tbodyId, guests) {
-  const tbody = document.getElementById(tbodyId);
-  if (!guests.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted);font-size:13px">No guests in this section yet</td></tr>`;
-    return;
-  }
-  tbody.innerHTML = guests.map(g => `
-    <tr>
-      <td><strong>${escHtml(g.name)}</strong></td>
-      <td>${escHtml(g.phone || '—')}</td>
-      <td><span class="side-badge">${sideLabel(g.side)}</span></td>
-      <td class="${g.invited === 'yes' ? 'invited-yes' : 'invited-no'}">${g.invited === 'yes' ? '✓ Yes' : 'No'}</td>
-      <td><span class="rsvp-badge rsvp-${g.rsvp}">${rsvpLabel(g.rsvp)}</span></td>
-      <td>${g.plus > 0 ? '+' + g.plus : '—'}</td>
-      <td style="color:var(--text-muted);font-size:12.5px">${escHtml(g.note || '')}</td>
-      <td>
-        <button class="btn-icon" onclick="editGuest('${g.id}')">✎</button>
-        <button class="btn-icon" onclick="deleteGuest('${g.id}')">✕</button>
-      </td>
-    </tr>`).join('');
-}
+// Chip click handlers
+document.getElementById('groupChips').addEventListener('click', e => {
+  const chip = e.target.closest('.group-chip');
+  if (!chip) return;
+  activeGroup = chip.dataset.group;
+  document.querySelectorAll('.group-chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  renderGuests();
+});
 
-function sideLabel(s) { return s === 'bride' ? "Bride's" : s === 'groom' ? "Groom's" : 'Mutual'; }
-function rsvpLabel(r) {
+document.getElementById('rsvpChips').addEventListener('click', e => {
+  const chip = e.target.closest('.rsvp-chip');
+  if (!chip) return;
+  activeRsvp = chip.dataset.rsvp;
+  document.querySelectorAll('.rsvp-chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  renderGuests();
+});
+
+
   if (r === 'confirmed') return '✓ Confirmed';
   if (r === 'declined') return '✗ Declined';
   if (r === 'maybe') return '? Maybe';
@@ -540,7 +630,7 @@ function editGuest(id) {
 
 async function deleteGuest(id) {
   if (!confirm('Remove this guest?')) return;
-  try { await db.from('guests').delete().eq('id', id); } catch (e) { }
+  try { await db.from('guests').delete().eq('id', id); } catch (e) {}
   state.guests = state.guests.filter(g => g.id !== id);
   saveLocal();
   renderGuests();
@@ -592,8 +682,6 @@ document.getElementById('saveGuest').addEventListener('click', async () => {
 });
 
 document.getElementById('guestSearch').addEventListener('input', renderGuests);
-document.getElementById('guestFilterSection').addEventListener('change', renderGuests);
-document.getElementById('guestFilterRsvp').addEventListener('change', renderGuests);
 
 // ─── BUDGET ───────────────────────────────────────────────────────────────────
 function renderBudget() {
@@ -632,7 +720,7 @@ function renderBudget() {
 
 document.getElementById('totalBudgetInput').addEventListener('change', async e => {
   state.settings.budget = Number(e.target.value) || 0;
-  try { await db.from('settings').upsert({ id: 1, ...state.settings }); } catch (err) { }
+  try { await db.from('settings').upsert({ id: 1, ...state.settings }); } catch (err) {}
   saveLocal();
   renderBudget();
   renderDashboard();
@@ -664,7 +752,7 @@ function editExpense(id) {
 
 async function deleteExpense(id) {
   if (!confirm('Delete this expense?')) return;
-  try { await db.from('expenses').delete().eq('id', id); } catch (e) { }
+  try { await db.from('expenses').delete().eq('id', id); } catch (e) {}
   state.expenses = state.expenses.filter(e => e.id !== id);
   saveLocal();
   renderBudget();
@@ -718,7 +806,7 @@ function renderNotes() {
 }
 
 async function deleteNote(id) {
-  try { await db.from('notes').delete().eq('id', id); } catch (e) { }
+  try { await db.from('notes').delete().eq('id', id); } catch (e) {}
   state.notes = state.notes.filter(n => n.id !== id);
   saveLocal();
   renderNotes();

@@ -6,8 +6,8 @@
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
 // 🔧 REPLACE THESE TWO VALUES with your own from supabase.com → Project Settings → API
-const SUPABASE_URL = 'YOUR_SUPABASE_URL';
-const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+const SUPABASE_URL = 'https://bbnkcngltcypamdqzcyq.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJibmtjbmdsdGN5cGFtZHF6Y3lxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMjEyMjQsImV4cCI6MjA5MDg5NzIyNH0.oJepIft4tYrZCdr00Sp4B_YVgr_T9cWuvmfajaCNn4s';
 
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);

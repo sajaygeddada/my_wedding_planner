@@ -1,29 +1,66 @@
 /* ============================
-   WEDDING PLANNER — APP.JS v2
-   Storage: Supabase (cloud sync)
-   Fallback: localStorage
+   WEDDING PLANNER — APP.JS v3
+   Fixed: Supabase error handling,
+   broken rsvpLabel, all write ops
    ============================ */
 
-// ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
-// 🔧 REPLACE THESE TWO VALUES with your own from supabase.com → Project Settings → API
+// ─── SUPABASE CONFIG ─────────────────────────────────────────────────────────
+// Replace these with your values from supabase.com → Project Settings → API
 const SUPABASE_URL = 'https://bbnkcngltcypamdqzcyq.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJibmtjbmdsdGN5cGFtZHF6Y3lxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMjEyMjQsImV4cCI6MjA5MDg5NzIyNH0.oJepIft4tYrZCdr00Sp4B_YVgr_T9cWuvmfajaCNn4s';
 
-const { createClient } = supabase;
-const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ─── IN-MEMORY STATE ─────────────────────────────────────────────────────────
+// ─── STATE ───────────────────────────────────────────────────────────────────
 const state = {
   settings: { bride: '', groom: '', date: '', venue: '', budget: 0 },
-  tasks: [],
-  guests: [],
-  expenses: [],
-  notes: [],
+  tasks: [], guests: [], expenses: [], notes: [],
 };
-
 let selectedNoteColor = 'cream';
+let editingTaskId = null;
+let editingGuestId = null;
+let editingExpenseId = null;
+let activeGroup = '';
+let activeRsvp = '';
 
-// ─── SYNC INDICATOR (ring icon glow) ─────────────────────────────────────────
+// ─── SUPABASE HELPERS ────────────────────────────────────────────────────────
+// Supabase never throws — it returns { data, error }.
+// These helpers make every operation safe and log errors clearly.
+
+async function dbSelect(table, query) {
+  const res = await query;
+  if (res.error) { console.error(`[${table}] select error:`, res.error.message); return []; }
+  return res.data || [];
+}
+
+async function dbSelectOne(table, query) {
+  const res = await query;
+  if (res.error) { console.error(`[${table}] select error:`, res.error.message); return null; }
+  return res.data || null;
+}
+
+async function dbInsert(table, data) {
+  const res = await db.from(table).insert([data]).select().single();
+  if (res.error) { console.error(`[${table}] insert error:`, res.error.message); return null; }
+  return res.data;
+}
+
+async function dbUpdate(table, data, id) {
+  const res = await db.from(table).update(data).eq('id', id);
+  if (res.error) console.error(`[${table}] update error:`, res.error.message);
+}
+
+async function dbDelete(table, id) {
+  const res = await db.from(table).delete().eq('id', id);
+  if (res.error) console.error(`[${table}] delete error:`, res.error.message);
+}
+
+async function dbUpsert(table, data) {
+  const res = await db.from(table).upsert(data);
+  if (res.error) console.error(`[${table}] upsert error:`, res.error.message);
+}
+
+// ─── SYNC INDICATOR ──────────────────────────────────────────────────────────
 function setSyncStatus(status, tooltip) {
   const wrap = document.getElementById('ringIconWrap');
   if (!wrap) return;
@@ -31,9 +68,9 @@ function setSyncStatus(status, tooltip) {
   wrap.title = tooltip;
 }
 
-// ─── LOAD ALL DATA ────────────────────────────────────────────────────────────
+// ─── LOAD ALL ────────────────────────────────────────────────────────────────
 async function loadAll() {
-  setSyncStatus('connecting', '⏳ Syncing with cloud...');
+  setSyncStatus('connecting', '⏳ Connecting to Supabase...');
   try {
     const [tasks, guests, expenses, notes, settings] = await Promise.all([
       db.from('tasks').select('*').order('created_at', { ascending: true }),
@@ -43,17 +80,32 @@ async function loadAll() {
       db.from('settings').select('*').eq('id', 1).maybeSingle(),
     ]);
 
+    // Check for errors explicitly — Supabase doesn't throw, returns {error}
+    const errs = [
+      tasks.error && `tasks: ${tasks.error.message}`,
+      guests.error && `guests: ${guests.error.message}`,
+      expenses.error && `expenses: ${expenses.error.message}`,
+      notes.error && `notes: ${notes.error.message}`,
+      settings.error && `settings: ${settings.error.message}`,
+    ].filter(Boolean);
+
+    if (errs.length) {
+      console.error('Supabase errors:', errs.join(' | '));
+      throw new Error(errs[0]);
+    }
+
     state.tasks = tasks.data || [];
     state.guests = guests.data || [];
     state.expenses = expenses.data || [];
     state.notes = notes.data || [];
     if (settings.data) Object.assign(state.settings, settings.data);
 
-    setSyncStatus('synced', '☁ Synced — your data is live across all devices');
+    setSyncStatus('synced', '☁ Synced — live across all your devices');
+    saveLocal();
     renderAll();
   } catch (e) {
-    setSyncStatus('error', '⚠ Could not connect. Check SUPABASE_URL and SUPABASE_ANON_KEY in app.js');
-    console.error('Supabase load error:', e);
+    console.error('Supabase load failed:', e.message || e);
+    setSyncStatus('error', '⚠ Error: ' + (e.message || 'Check browser console (F12) for details'));
     loadFromLocalStorage();
   }
 }
@@ -63,12 +115,16 @@ function loadFromLocalStorage() {
     const raw = localStorage.getItem('weddingPlanner_v1');
     if (raw) {
       const saved = JSON.parse(raw);
-      Object.assign(state, saved);
-      setSyncStatus('warning', '⚠ Offline mode — data is local only. Fix Supabase keys to sync across devices.');
+      if (saved.settings) Object.assign(state.settings, saved.settings);
+      if (saved.tasks) state.tasks = saved.tasks;
+      if (saved.guests) state.guests = saved.guests;
+      if (saved.expenses) state.expenses = saved.expenses;
+      if (saved.notes) state.notes = saved.notes;
+      setSyncStatus('warning', '⚠ Offline mode — data is local only. Check Supabase keys in app.js.');
     } else {
-      setSyncStatus('warning', '⚠ Not connected to cloud. Set Supabase keys in app.js to enable sync.');
+      setSyncStatus('warning', '⚠ Not connected. Add Supabase keys in app.js to sync across devices.');
     }
-  } catch (e) {}
+  } catch (e) { console.error('localStorage load error:', e); }
   renderAll();
 }
 
@@ -76,7 +132,7 @@ function saveLocal() {
   localStorage.setItem('weddingPlanner_v1', JSON.stringify(state));
 }
 
-// ─── UTILS ────────────────────────────────────────────────────────────────────
+// ─── UTILS ───────────────────────────────────────────────────────────────────
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
 function formatINR(n) {
@@ -86,8 +142,7 @@ function formatINR(n) {
 
 function formatDate(d) {
   if (!d) return '';
-  const dt = new Date(d + 'T00:00:00');
-  return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function daysUntil(dateStr) {
@@ -100,6 +155,18 @@ function isOverdue(dateStr) {
   return d !== null && d < 0;
 }
 
+function escHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function rsvpLabel(r) {
+  if (r === 'confirmed') return '✓ Confirmed';
+  if (r === 'declined') return '✗ Declined';
+  if (r === 'maybe') return '? Maybe';
+  return 'Pending';
+}
+
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
@@ -107,28 +174,17 @@ function clearForm(...ids) {
   ids.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
-    if (el.tagName === 'SELECT') el.selectedIndex = 0;
-    else el.value = '';
+    el.tagName === 'SELECT' ? (el.selectedIndex = 0) : (el.value = '');
   });
 }
 
-function escHtml(str) {
-  if (!str) return '';
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ─── RENDER ALL ───────────────────────────────────────────────────────────────
+// ─── RENDER ALL ──────────────────────────────────────────────────────────────
 function renderAll() {
-  renderHeader();
-  renderStats();
-  renderDashboard();
-  renderTasks();
-  renderGuests();
-  renderBudget();
-  renderNotes();
+  renderHeader(); renderStats(); renderDashboard();
+  renderTasks(); renderGuests(); renderBudget(); renderNotes();
 }
 
-// ─── TABS ─────────────────────────────────────────────────────────────────────
+// ─── TABS ────────────────────────────────────────────────────────────────────
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -138,7 +194,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// ─── MODAL CLOSE ──────────────────────────────────────────────────────────────
+// ─── MODALS ──────────────────────────────────────────────────────────────────
 document.querySelectorAll('.modal-close, .btn-secondary[data-modal]').forEach(btn => {
   btn.addEventListener('click', () => closeModal(btn.getAttribute('data-modal') || btn.closest('.modal-overlay').id));
 });
@@ -146,10 +202,10 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
   overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(overlay.id); });
 });
 
-// ─── HEADER / SETTINGS ────────────────────────────────────────────────────────
+// ─── HEADER / SETTINGS ───────────────────────────────────────────────────────
 function renderHeader() {
   const { bride, groom, date, venue } = state.settings;
-  const names = bride && groom ? `${bride} & ${groom}` : bride || groom || 'Your Wedding';
+  const names = (bride && groom) ? `${bride} & ${groom}` : bride || groom || 'Wedding Planner';
   document.querySelector('.header-title h1').textContent = names;
   let subtitle = 'Set your wedding date →';
   if (venue && date) subtitle = `${formatDate(date)} · ${venue}`;
@@ -183,28 +239,22 @@ document.getElementById('saveSettings').addEventListener('click', async () => {
     venue: document.getElementById('settingVenue').value.trim(),
   };
   Object.assign(state.settings, updated);
-  try { await db.from('settings').upsert({ id: 1, ...state.settings }); } catch (e) {}
+  await dbUpsert('settings', { id: 1, ...state.settings });
   saveLocal();
-  renderHeader();
-  renderDashboard();
+  renderHeader(); renderDashboard();
   closeModal('settingsModal');
 });
 
-// ─── STATS ────────────────────────────────────────────────────────────────────
+// ─── STATS ───────────────────────────────────────────────────────────────────
 function renderStats() {
   const done = state.tasks.filter(t => t.done).length;
   document.getElementById('statTasksDone').textContent = `${done}/${state.tasks.length}`;
 
   const headCount = state.guests.length;
   const plusCount = state.guests.reduce((s, g) => s + (parseInt(g.plus) || 0), 0);
-  const totalWithPlus = headCount + plusCount;
-  document.getElementById('statGuests').textContent = totalWithPlus;
+  document.getElementById('statGuests').textContent = headCount + plusCount;
   const sub = document.getElementById('statGuestsSub');
-  if (plusCount > 0) {
-    sub.textContent = `${headCount} people + ${plusCount} +1s`;
-  } else {
-    sub.textContent = '';
-  }
+  sub.textContent = plusCount > 0 ? `${headCount} people + ${plusCount} +1s` : '';
 
   document.getElementById('statRSVP').textContent = state.guests.filter(g => g.rsvp === 'confirmed').length;
   document.getElementById('statInvited').textContent = state.guests.filter(g => g.invited === 'yes').length;
@@ -212,132 +262,108 @@ function renderStats() {
   document.getElementById('statBudget').textContent = formatINR(spent);
 }
 
-// ─── DASHBOARD ────────────────────────────────────────────────────────────────
+// ─── DASHBOARD ───────────────────────────────────────────────────────────────
 function renderDashboard() {
-  renderUrgentAlerts();
-  renderDueSoon();
-  renderRsvpPending();
-  renderNotInvited();
-  renderBudgetAlert();
-  renderTopAlertBanner();
+  renderUrgentAlerts(); renderDueSoon(); renderRsvpPending();
+  renderNotInvited(); renderBudgetAlert(); renderTopAlertBanner();
 }
 
 function renderUrgentAlerts() {
-  const list = document.getElementById('urgentAlertsList');
+  const el = document.getElementById('urgentAlertsList');
   const overdue = state.tasks.filter(t => !t.done && isOverdue(t.due_date));
-  const highPriority = state.tasks.filter(t => !t.done && t.priority === 'high');
+  const high = state.tasks.filter(t => !t.done && t.priority === 'high');
   const seen = new Set();
   const items = [];
-  overdue.forEach(t => { if (!seen.has(t.id)) { seen.add(t.id); items.push({ ...t, urgentType: 'overdue' }); } });
-  highPriority.forEach(t => { if (!seen.has(t.id)) { seen.add(t.id); items.push({ ...t, urgentType: 'high' }); } });
+  [...overdue, ...high].forEach(t => { if (!seen.has(t.id)) { seen.add(t.id); items.push(t); } });
 
   if (!items.length) {
-    list.innerHTML = `<div class="dash-all-good">✓ No urgent items right now — you're ahead of the game!</div>`;
+    el.innerHTML = `<div class="dash-all-good">✓ No urgent items — you're ahead of the game!</div>`;
     return;
   }
-
-  list.innerHTML = `<div class="dash-list">${items.map(t => `
+  el.innerHTML = `<div class="dash-list">${items.map(t => `
     <div class="dash-item urgent">
       <div class="dash-item-body">
         <div class="dash-item-name">${escHtml(t.name)}</div>
         <div class="dash-item-meta">
-          ${t.urgentType === 'overdue' ? `⚠ Overdue since ${formatDate(t.due_date)} · ` : ''}
-          🔴 High Priority · ${t.category}
-          ${t.notes ? ` · ${escHtml(t.notes).slice(0,50)}` : ''}
+          ${isOverdue(t.due_date) ? `⚠ Overdue since ${formatDate(t.due_date)} · ` : ''}
+          🔴 High Priority · ${t.category || ''}
         </div>
       </div>
       <button class="btn-primary" style="font-size:12px;padding:5px 12px;white-space:nowrap" onclick="quickDoneTask('${t.id}')">Mark Done</button>
-    </div>`).join('')}
-  </div>`;
+    </div>`).join('')}</div>`;
 }
 
 function renderDueSoon() {
-  const list = document.getElementById('dueSoonList');
+  const el = document.getElementById('dueSoonList');
   const items = state.tasks.filter(t => {
     if (t.done) return false;
     const d = daysUntil(t.due_date);
     return d !== null && d >= 0 && d <= 7;
   }).sort((a, b) => daysUntil(a.due_date) - daysUntil(b.due_date));
 
-  if (!items.length) {
-    list.innerHTML = `<div class="dash-empty">No tasks due in the next 7 days — nice!</div>`;
-    return;
-  }
-  list.innerHTML = `<div class="dash-list">${items.map(t => {
+  if (!items.length) { el.innerHTML = `<div class="dash-empty">No tasks due in 7 days</div>`; return; }
+  el.innerHTML = `<div class="dash-list">${items.map(t => {
     const d = daysUntil(t.due_date);
     const label = d === 0 ? 'Today!' : d === 1 ? 'Tomorrow' : `In ${d} days`;
     return `<div class="dash-item ${d <= 1 ? 'warning' : 'info'}">
       <div class="dash-item-body">
         <div class="dash-item-name">${escHtml(t.name)}</div>
-        <div class="dash-item-meta">${label} · ${t.category}</div>
-      </div>
-    </div>`;
+        <div class="dash-item-meta">${label} · ${t.category || ''}</div>
+      </div></div>`;
   }).join('')}</div>`;
 }
 
 function renderRsvpPending() {
-  const list = document.getElementById('rsvpPendingList');
+  const el = document.getElementById('rsvpPendingList');
   const items = state.guests.filter(g => g.invited === 'yes' && g.rsvp === 'pending');
-  if (!items.length) {
-    list.innerHTML = `<div class="dash-all-good">✓ All invited guests have responded</div>`;
-    return;
-  }
-  list.innerHTML = `<div class="dash-list">
-    ${items.slice(0, 5).map(g => `
-      <div class="dash-item warning">
-        <div class="dash-item-body">
-          <div class="dash-item-name">${escHtml(g.name)}</div>
-          <div class="dash-item-meta">${g.section === 'family' ? '🏠 Family' : '✦ Friends'} · ${sideLabel(g.side)}</div>
-        </div>
-      </div>`).join('')}
-    ${items.length > 5 ? `<div class="dash-empty">+${items.length - 5} more awaiting response</div>` : ''}
+  if (!items.length) { el.innerHTML = `<div class="dash-all-good">✓ All invited guests have responded</div>`; return; }
+  el.innerHTML = `<div class="dash-list">
+    ${items.slice(0, 5).map(g => `<div class="dash-item warning">
+      <div class="dash-item-body">
+        <div class="dash-item-name">${escHtml(g.name)}</div>
+        <div class="dash-item-meta">${g.section === 'family' ? '🏠 Family' : '✦ Friends'}</div>
+      </div></div>`).join('')}
+    ${items.length > 5 ? `<div class="dash-empty">+${items.length - 5} more</div>` : ''}
   </div>`;
 }
 
 function renderNotInvited() {
-  const list = document.getElementById('notInvitedList');
+  const el = document.getElementById('notInvitedList');
   const items = state.guests.filter(g => g.invited !== 'yes');
-  if (!items.length) {
-    list.innerHTML = `<div class="dash-all-good">✓ Everyone has been invited!</div>`;
-    return;
-  }
-  list.innerHTML = `<div class="dash-list">
-    ${items.slice(0, 5).map(g => `
-      <div class="dash-item info">
-        <div class="dash-item-body">
-          <div class="dash-item-name">${escHtml(g.name)}</div>
-          <div class="dash-item-meta">${g.section === 'family' ? '🏠 Family' : '✦ Friends'} · ${sideLabel(g.side)}</div>
-        </div>
-      </div>`).join('')}
-    ${items.length > 5 ? `<div class="dash-empty">+${items.length - 5} more not yet invited</div>` : ''}
+  if (!items.length) { el.innerHTML = `<div class="dash-all-good">✓ Everyone has been invited!</div>`; return; }
+  el.innerHTML = `<div class="dash-list">
+    ${items.slice(0, 5).map(g => `<div class="dash-item info">
+      <div class="dash-item-body">
+        <div class="dash-item-name">${escHtml(g.name)}</div>
+        <div class="dash-item-meta">${g.section === 'family' ? '🏠 Family' : '✦ Friends'}</div>
+      </div></div>`).join('')}
+    ${items.length > 5 ? `<div class="dash-empty">+${items.length - 5} more</div>` : ''}
   </div>`;
 }
 
 function renderBudgetAlert() {
-  const panel = document.getElementById('budgetAlertPanel');
+  const el = document.getElementById('budgetAlertPanel');
   const spent = state.expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
   const budget = Number(state.settings.budget || 0);
   const pct = budget > 0 ? Math.min(Math.round((spent / budget) * 100), 100) : 0;
   const cls = pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : 'safe';
-  let warningMsg = '';
-  if (!budget) warningMsg = `<div class="budget-alert-label" style="font-style:italic;margin-top:8px">Set your total budget in the Budget tab to track spending</div>`;
-  else if (pct >= 90) warningMsg = `<div class="budget-alert-danger">⚠ Budget nearly exhausted! Only ${formatINR(budget - spent)} left.</div>`;
-  else if (pct >= 70) warningMsg = `<div class="budget-alert-warning">⚡ 70%+ of budget used — watch your spending!</div>`;
-
-  panel.innerHTML = `
+  let warn = '';
+  if (!budget) warn = `<div style="font-size:13px;color:var(--text-muted);font-style:italic;margin-top:8px">Set your total budget in the Budget tab</div>`;
+  else if (pct >= 90) warn = `<div class="budget-alert-danger">⚠ Budget nearly exhausted! Only ${formatINR(budget - spent)} left.</div>`;
+  else if (pct >= 70) warn = `<div class="budget-alert-warning">⚡ 70%+ of budget used — watch spending!</div>`;
+  el.innerHTML = `
     <div class="budget-alert-label">${formatINR(spent)} spent${budget ? ` of ${formatINR(budget)}` : ''}</div>
-    ${budget ? `
-    <div class="budget-alert-bar"><div class="budget-alert-fill ${cls}" style="width:${pct}%"></div></div>
-    <div class="budget-alert-label">${pct}% used · ${formatINR(budget - spent)} remaining</div>` : ''}
-    ${warningMsg}`;
+    ${budget ? `<div class="budget-alert-bar"><div class="budget-alert-fill ${cls}" style="width:${pct}%"></div></div>
+    <div class="budget-alert-label">${pct}% used · ${formatINR(budget - spent)} remaining</div>` : ''}${warn}`;
 }
 
 function renderTopAlertBanner() {
   const banner = document.getElementById('alertBanner');
   const overdue = state.tasks.filter(t => !t.done && isOverdue(t.due_date));
   const high = state.tasks.filter(t => !t.done && t.priority === 'high');
-  const all = [...new Map([...overdue, ...high].map(t => [t.id, t])).values()];
-
+  const seen = new Set();
+  const all = [];
+  [...overdue, ...high].forEach(t => { if (!seen.has(t.id)) { seen.add(t.id); all.push(t); } });
   if (!all.length) { banner.style.display = 'none'; return; }
   banner.style.display = 'flex';
   const preview = all.slice(0, 2).map(t => `<strong>${escHtml(t.name)}</strong>`).join(', ');
@@ -351,12 +377,11 @@ function renderTopAlertBanner() {
 async function quickDoneTask(id) {
   const task = state.tasks.find(t => t.id === id);
   if (task) task.done = true;
-  try { await db.from('tasks').update({ done: true }).eq('id', id); } catch (e) {}
-  saveLocal();
-  renderAll();
+  await dbUpdate('tasks', { done: true }, id);
+  saveLocal(); renderAll();
 }
 
-// ─── TASKS ────────────────────────────────────────────────────────────────────
+// ─── TASKS ───────────────────────────────────────────────────────────────────
 function renderTasks() {
   const catFilter = document.getElementById('taskFilterCat').value;
   const statusFilter = document.getElementById('taskFilterStatus').value;
@@ -375,13 +400,11 @@ function renderTasks() {
     list.innerHTML = `<div class="empty-state"><div class="empty-state-icon">✓</div><p>No tasks here. Add one!</p></div>`;
     return;
   }
-
   const pOrd = { high: 0, medium: 1, low: 2 };
   tasks.sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1;
     return (pOrd[a.priority] || 1) - (pOrd[b.priority] || 1);
   });
-
   list.innerHTML = tasks.map(task => {
     const ov = !task.done && isOverdue(task.due_date);
     return `
@@ -390,8 +413,8 @@ function renderTasks() {
       <div class="task-info">
         <div class="task-name">${escHtml(task.name)}</div>
         <div class="task-meta">
-          <span class="badge badge-cat">${task.category}</span>
-          <span class="badge badge-${task.priority}">${task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}</span>
+          <span class="badge badge-cat">${task.category || ''}</span>
+          <span class="badge badge-${task.priority}">${(task.priority || '').charAt(0).toUpperCase() + (task.priority || '').slice(1)}</span>
           ${task.due_date ? `<span class="badge ${ov ? 'badge-overdue' : 'badge-due'}">${ov ? '⚠ Overdue · ' : ''}${formatDate(task.due_date)}</span>` : ''}
         </div>
         ${task.notes ? `<div class="task-notes">${escHtml(task.notes)}</div>` : ''}
@@ -408,24 +431,16 @@ async function toggleTask(id) {
   const task = state.tasks.find(t => t.id === id);
   if (!task) return;
   task.done = !task.done;
-  try { await db.from('tasks').update({ done: task.done }).eq('id', id); } catch (e) {}
-  saveLocal();
-  renderTasks();
-  renderDashboard();
-  renderStats();
+  await dbUpdate('tasks', { done: task.done }, id);
+  saveLocal(); renderTasks(); renderDashboard(); renderStats();
 }
 
 async function deleteTask(id) {
   if (!confirm('Delete this task?')) return;
-  try { await db.from('tasks').delete().eq('id', id); } catch (e) {}
+  await dbDelete('tasks', id);
   state.tasks = state.tasks.filter(t => t.id !== id);
-  saveLocal();
-  renderTasks();
-  renderDashboard();
-  renderStats();
+  saveLocal(); renderTasks(); renderDashboard(); renderStats();
 }
-
-let editingTaskId = null;
 
 function editTask(id) {
   const task = state.tasks.find(t => t.id === id);
@@ -433,8 +448,8 @@ function editTask(id) {
   editingTaskId = id;
   document.getElementById('taskModalTitle').textContent = 'Edit Task';
   document.getElementById('taskName').value = task.name;
-  document.getElementById('taskCategory').value = task.category;
-  document.getElementById('taskPriority').value = task.priority;
+  document.getElementById('taskCategory').value = task.category || 'Other';
+  document.getElementById('taskPriority').value = task.priority || 'medium';
   document.getElementById('taskDueDate').value = task.due_date || '';
   document.getElementById('taskNotes').value = task.notes || '';
   openModal('addTaskModal');
@@ -460,94 +475,64 @@ document.getElementById('saveTask').addEventListener('click', async () => {
     notes: document.getElementById('taskNotes').value.trim(),
     done: false,
   };
-  try {
-    if (editingTaskId) {
-      await db.from('tasks').update(data).eq('id', editingTaskId);
-      Object.assign(state.tasks.find(t => t.id === editingTaskId), data);
-    } else {
-      const res = await db.from('tasks').insert([data]).select().single();
-      state.tasks.push(res.data);
-    }
-  } catch (e) {
-    if (editingTaskId) Object.assign(state.tasks.find(t => t.id === editingTaskId), data);
-    else state.tasks.push({ id: uid(), ...data });
+  if (editingTaskId) {
+    await dbUpdate('tasks', data, editingTaskId);
+    Object.assign(state.tasks.find(t => t.id === editingTaskId), data);
+  } else {
+    const inserted = await dbInsert('tasks', data);
+    state.tasks.push(inserted || { id: uid(), ...data });
   }
-  saveLocal();
-  renderTasks();
-  renderDashboard();
-  renderStats();
+  saveLocal(); renderTasks(); renderDashboard(); renderStats();
   closeModal('addTaskModal');
 });
 
 document.getElementById('taskFilterCat').addEventListener('change', renderTasks);
 document.getElementById('taskFilterStatus').addEventListener('change', renderTasks);
 
-// ─── GUESTS ───────────────────────────────────────────────────────────────────
-
-// Active filter state
-let activeGroup = '';   // '' | 'family|bride' | 'friends|groom' | etc.
-let activeRsvp  = '';   // '' | 'confirmed' | 'pending' | 'maybe' | 'declined'
-
-// Group chip config — defines how to slice the guest list
+// ─── GUESTS ──────────────────────────────────────────────────────────────────
 const GROUP_CONFIGS = [
-  { key: '',              label: 'All Guests',       icon: '◈', colorKey: 'all',            match: () => true },
-  { key: 'family|bride',  label: "Family — Bride's", icon: '🏠', colorKey: 'family-bride',  match: g => g.section === 'family'  && g.side === 'bride'  },
-  { key: 'family|groom',  label: "Family — Groom's", icon: '🏠', colorKey: 'family-groom',  match: g => g.section === 'family'  && g.side === 'groom'  },
-  { key: 'family|mutual', label: 'Family — Mutual',  icon: '🏠', colorKey: 'family-mutual', match: g => g.section === 'family'  && g.side === 'mutual' },
-  { key: 'family|',       label: 'All Family',       icon: '🏠', colorKey: 'family',        match: g => g.section === 'family'  },
-  { key: 'friends|bride', label: "Friends — Bride's",icon: '✦', colorKey: 'friends-bride',  match: g => g.section === 'friends' && g.side === 'bride'  },
-  { key: 'friends|groom', label: "Friends — Groom's",icon: '✦', colorKey: 'friends-groom',  match: g => g.section === 'friends' && g.side === 'groom'  },
-  { key: 'friends|mutual',label: 'Friends — Mutual', icon: '✦', colorKey: 'friends-mutual', match: g => g.section === 'friends' && g.side === 'mutual' },
-  { key: 'friends|',      label: 'All Friends',      icon: '✦', colorKey: 'friends',        match: g => g.section === 'friends' },
+  { key: '', match: () => true, label: 'All Guests', icon: '◈', colorKey: 'all' },
+  { key: 'family|bride', match: g => g.section === 'family' && g.side === 'bride', label: "Family — Bride's", icon: '🏠', colorKey: 'family-bride' },
+  { key: 'family|groom', match: g => g.section === 'family' && g.side === 'groom', label: "Family — Groom's", icon: '🏠', colorKey: 'family-groom' },
+  { key: 'family|mutual', match: g => g.section === 'family' && g.side === 'mutual', label: 'Family — Mutual', icon: '🏠', colorKey: 'family-mutual' },
+  { key: 'family|', match: g => g.section === 'family', label: 'All Family', icon: '🏠', colorKey: 'family' },
+  { key: 'friends|bride', match: g => g.section === 'friends' && g.side === 'bride', label: "Friends — Bride's", icon: '✦', colorKey: 'friends-bride' },
+  { key: 'friends|groom', match: g => g.section === 'friends' && g.side === 'groom', label: "Friends — Groom's", icon: '✦', colorKey: 'friends-groom' },
+  { key: 'friends|mutual', match: g => g.section === 'friends' && g.side === 'mutual', label: 'Friends — Mutual', icon: '✦', colorKey: 'friends-mutual' },
+  { key: 'friends|', match: g => g.section === 'friends', label: 'All Friends', icon: '✦', colorKey: 'friends' },
 ];
 
-// When viewing "All Guests", split into these sub-sections automatically
 const AUTO_SECTIONS = [
-  { key: 'family-bride',   label: "Family — Bride's Side", icon: '🏠', match: g => g.section === 'family'  && g.side === 'bride'  },
-  { key: 'family-groom',   label: "Family — Groom's Side", icon: '🏠', match: g => g.section === 'family'  && g.side === 'groom'  },
-  { key: 'family-mutual',  label: 'Family — Mutual',       icon: '🏠', match: g => g.section === 'family'  && g.side === 'mutual' },
-  { key: 'friends-bride',  label: "Friends — Bride's Side",icon: '✦', match: g => g.section === 'friends' && g.side === 'bride'  },
-  { key: 'friends-groom',  label: "Friends — Groom's Side",icon: '✦', match: g => g.section === 'friends' && g.side === 'groom'  },
-  { key: 'friends-mutual', label: 'Friends — Mutual',      icon: '✦', match: g => g.section === 'friends' && g.side === 'mutual' },
+  { key: 'family-bride', match: g => g.section === 'family' && g.side === 'bride', label: "Family — Bride's Side", icon: '🏠' },
+  { key: 'family-groom', match: g => g.section === 'family' && g.side === 'groom', label: "Family — Groom's Side", icon: '🏠' },
+  { key: 'family-mutual', match: g => g.section === 'family' && g.side === 'mutual', label: 'Family — Mutual', icon: '🏠' },
+  { key: 'friends-bride', match: g => g.section === 'friends' && g.side === 'bride', label: "Friends — Bride's Side", icon: '✦' },
+  { key: 'friends-groom', match: g => g.section === 'friends' && g.side === 'groom', label: "Friends — Groom's Side", icon: '✦' },
+  { key: 'friends-mutual', match: g => g.section === 'friends' && g.side === 'mutual', label: 'Friends — Mutual', icon: '✦' },
 ];
 
 function renderGuests() {
   const search = document.getElementById('guestSearch').value.toLowerCase();
+  const groupCfg = GROUP_CONFIGS.find(c => c.key === activeGroup) || GROUP_CONFIGS[0];
 
-  // Apply search + rsvp filter first
   let filtered = state.guests.filter(g => {
     const matchSearch = !search || g.name.toLowerCase().includes(search) || (g.phone || '').includes(search);
-    const matchRsvp   = !activeRsvp || g.rsvp === activeRsvp;
-    return matchSearch && matchRsvp;
+    const matchRsvp = !activeRsvp || g.rsvp === activeRsvp;
+    return matchSearch && matchRsvp && groupCfg.match(g);
   });
 
-  // Apply group filter
-  const groupCfg = GROUP_CONFIGS.find(c => c.key === activeGroup) || GROUP_CONFIGS[0];
-  filtered = filtered.filter(groupCfg.match);
-
   const container = document.getElementById('guestSectionsContainer');
-
   if (!filtered.length) {
     container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">◎</div><p>No guests match this filter</p></div>`;
-    renderStats();
-    return;
+    renderStats(); return;
   }
 
-  // Decide how to section the results
-  let sections;
-  if (activeGroup === '') {
-    // Auto multi-section view
-    sections = AUTO_SECTIONS
-      .map(s => ({ ...s, guests: filtered.filter(s.match) }))
-      .filter(s => s.guests.length > 0);
-  } else {
-    // Single group — one section
-    sections = [{ key: groupCfg.colorKey, label: groupCfg.label, icon: groupCfg.icon, guests: filtered }];
-  }
+  const sections = activeGroup === ''
+    ? AUTO_SECTIONS.map(s => ({ ...s, guests: filtered.filter(s.match) })).filter(s => s.guests.length > 0)
+    : [{ key: groupCfg.colorKey, label: groupCfg.label, icon: groupCfg.icon, guests: filtered }];
 
   container.innerHTML = sections.map(sec => {
     const plus = sec.guests.reduce((sum, g) => sum + (parseInt(g.plus) || 0), 0);
-    const countLabel = plus > 0 ? `${sec.guests.length} <span class="guest-count-sub">+${plus} guests</span>` : `${sec.guests.length}`;
     return `
     <div class="guest-section">
       <div class="section-header section-header-${sec.key}">
@@ -561,8 +546,7 @@ function renderGuests() {
           <thead><tr>
             <th>Name</th><th>Phone</th><th>Invited</th><th>RSVP</th><th>+1</th><th>Notes</th><th></th>
           </tr></thead>
-          <tbody>
-            ${sec.guests.map(g => `
+          <tbody>${sec.guests.map(g => `
             <tr>
               <td><strong>${escHtml(g.name)}</strong></td>
               <td>${escHtml(g.phone || '—')}</td>
@@ -580,11 +564,9 @@ function renderGuests() {
       </div>
     </div>`;
   }).join('');
-
   renderStats();
 }
 
-// Chip click handlers
 document.getElementById('groupChips').addEventListener('click', e => {
   const chip = e.target.closest('.group-chip');
   if (!chip) return;
@@ -603,14 +585,7 @@ document.getElementById('rsvpChips').addEventListener('click', e => {
   renderGuests();
 });
 
-
-  if (r === 'confirmed') return '✓ Confirmed';
-  if (r === 'declined') return '✗ Declined';
-  if (r === 'maybe') return '? Maybe';
-  return 'Pending';
-}
-
-let editingGuestId = null;
+document.getElementById('guestSearch').addEventListener('input', renderGuests);
 
 function editGuest(id) {
   const g = state.guests.find(g => g.id === id);
@@ -630,11 +605,9 @@ function editGuest(id) {
 
 async function deleteGuest(id) {
   if (!confirm('Remove this guest?')) return;
-  try { await db.from('guests').delete().eq('id', id); } catch (e) {}
+  await dbDelete('guests', id);
   state.guests = state.guests.filter(g => g.id !== id);
-  saveLocal();
-  renderGuests();
-  renderDashboard();
+  saveLocal(); renderGuests(); renderDashboard();
 }
 
 document.getElementById('openAddGuest').addEventListener('click', () => {
@@ -662,28 +635,18 @@ document.getElementById('saveGuest').addEventListener('click', async () => {
     plus: parseInt(document.getElementById('guestPlus').value) || 0,
     note: document.getElementById('guestNote').value.trim(),
   };
-  try {
-    if (editingGuestId) {
-      await db.from('guests').update(data).eq('id', editingGuestId);
-      Object.assign(state.guests.find(g => g.id === editingGuestId), data);
-    } else {
-      const res = await db.from('guests').insert([data]).select().single();
-      state.guests.push(res.data);
-    }
-  } catch (e) {
-    if (editingGuestId) Object.assign(state.guests.find(g => g.id === editingGuestId), data);
-    else state.guests.push({ id: uid(), ...data });
+  if (editingGuestId) {
+    await dbUpdate('guests', data, editingGuestId);
+    Object.assign(state.guests.find(g => g.id === editingGuestId), data);
+  } else {
+    const inserted = await dbInsert('guests', data);
+    state.guests.push(inserted || { id: uid(), ...data });
   }
-  saveLocal();
-  renderGuests();
-  renderDashboard();
-  renderStats();
+  saveLocal(); renderGuests(); renderDashboard(); renderStats();
   closeModal('addGuestModal');
 });
 
-document.getElementById('guestSearch').addEventListener('input', renderGuests);
-
-// ─── BUDGET ───────────────────────────────────────────────────────────────────
+// ─── BUDGET ──────────────────────────────────────────────────────────────────
 function renderBudget() {
   const spent = state.expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
   const budget = Number(state.settings.budget || 0);
@@ -705,9 +668,9 @@ function renderBudget() {
       <div class="expense-info">
         <div class="expense-name">${escHtml(e.name)}</div>
         <div class="expense-meta">
-          <span class="badge badge-cat">${e.category}</span>
+          <span class="badge badge-cat">${e.category || ''}</span>
           ${e.date ? ` · ${formatDate(e.date)}` : ''}
-          · <span class="expense-status-${e.status}">${e.status.charAt(0).toUpperCase() + e.status.slice(1)}</span>
+          · <span class="expense-status-${e.status}">${(e.status || '').charAt(0).toUpperCase() + (e.status || '').slice(1)}</span>
         </div>
       </div>
       <div class="expense-amount">${formatINR(e.amount)}</div>
@@ -718,23 +681,10 @@ function renderBudget() {
     </div>`).join('');
 }
 
-document.getElementById('totalBudgetInput').addEventListener('change', async e => {
-  state.settings.budget = Number(e.target.value) || 0;
-  try { await db.from('settings').upsert({ id: 1, ...state.settings }); } catch (err) {}
-  saveLocal();
-  renderBudget();
-  renderDashboard();
-});
-
-let editingExpenseId = null;
-
-document.getElementById('openAddExpense').addEventListener('click', () => {
-  editingExpenseId = null;
-  document.getElementById('expenseModalTitle').textContent = 'Add Expense';
-  clearForm('expenseName', 'expenseAmount', 'expenseDate');
-  document.getElementById('expenseCategory').value = 'Catering';
-  document.getElementById('expenseStatus').value = 'paid';
-  openModal('addExpenseModal');
+document.getElementById('totalBudgetInput').addEventListener('change', async ev => {
+  state.settings.budget = Number(ev.target.value) || 0;
+  await dbUpsert('settings', { id: 1, ...state.settings });
+  saveLocal(); renderBudget(); renderDashboard();
 });
 
 function editExpense(id) {
@@ -752,45 +702,42 @@ function editExpense(id) {
 
 async function deleteExpense(id) {
   if (!confirm('Delete this expense?')) return;
-  try { await db.from('expenses').delete().eq('id', id); } catch (e) {}
+  await dbDelete('expenses', id);
   state.expenses = state.expenses.filter(e => e.id !== id);
-  saveLocal();
-  renderBudget();
-  renderDashboard();
-  renderStats();
+  saveLocal(); renderBudget(); renderDashboard(); renderStats();
 }
+
+document.getElementById('openAddExpense').addEventListener('click', () => {
+  editingExpenseId = null;
+  document.getElementById('expenseModalTitle').textContent = 'Add Expense';
+  clearForm('expenseName', 'expenseAmount', 'expenseDate');
+  document.getElementById('expenseCategory').value = 'Catering';
+  document.getElementById('expenseStatus').value = 'paid';
+  openModal('addExpenseModal');
+});
 
 document.getElementById('saveExpense').addEventListener('click', async () => {
   const name = document.getElementById('expenseName').value.trim();
   const amount = document.getElementById('expenseAmount').value;
   if (!name || !amount) { alert('Name and amount are required.'); return; }
   const data = {
-    name,
-    amount: Number(amount),
+    name, amount: Number(amount),
     category: document.getElementById('expenseCategory').value,
     status: document.getElementById('expenseStatus').value,
     date: document.getElementById('expenseDate').value || null,
   };
-  try {
-    if (editingExpenseId) {
-      await db.from('expenses').update(data).eq('id', editingExpenseId);
-      Object.assign(state.expenses.find(e => e.id === editingExpenseId), data);
-    } else {
-      const res = await db.from('expenses').insert([data]).select().single();
-      state.expenses.push(res.data);
-    }
-  } catch (e) {
-    if (editingExpenseId) Object.assign(state.expenses.find(e => e.id === editingExpenseId), data);
-    else state.expenses.push({ id: uid(), ...data });
+  if (editingExpenseId) {
+    await dbUpdate('expenses', data, editingExpenseId);
+    Object.assign(state.expenses.find(e => e.id === editingExpenseId), data);
+  } else {
+    const inserted = await dbInsert('expenses', data);
+    state.expenses.push(inserted || { id: uid(), ...data });
   }
-  saveLocal();
-  renderBudget();
-  renderDashboard();
-  renderStats();
+  saveLocal(); renderBudget(); renderDashboard(); renderStats();
   closeModal('addExpenseModal');
 });
 
-// ─── NOTES ────────────────────────────────────────────────────────────────────
+// ─── NOTES ───────────────────────────────────────────────────────────────────
 function renderNotes() {
   const grid = document.getElementById('notesGrid');
   if (!state.notes.length) {
@@ -806,10 +753,9 @@ function renderNotes() {
 }
 
 async function deleteNote(id) {
-  try { await db.from('notes').delete().eq('id', id); } catch (e) {}
+  await dbDelete('notes', id);
   state.notes = state.notes.filter(n => n.id !== id);
-  saveLocal();
-  renderNotes();
+  saveLocal(); renderNotes();
 }
 
 document.getElementById('openAddNote').addEventListener('click', () => {
@@ -836,16 +782,11 @@ document.getElementById('saveNote').addEventListener('click', async () => {
     content: document.getElementById('noteContent').value.trim(),
     color: selectedNoteColor,
   };
-  try {
-    const res = await db.from('notes').insert([data]).select().single();
-    state.notes.push(res.data);
-  } catch (e) {
-    state.notes.push({ id: uid(), ...data });
-  }
-  saveLocal();
-  renderNotes();
+  const inserted = await dbInsert('notes', data);
+  state.notes.push(inserted || { id: uid(), ...data });
+  saveLocal(); renderNotes();
   closeModal('addNoteModal');
 });
 
-// ─── BOOT ─────────────────────────────────────────────────────────────────────
+// ─── BOOT ────────────────────────────────────────────────────────────────────
 loadAll();
